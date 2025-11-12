@@ -1,0 +1,320 @@
+---
+title: "Homework 8"
+format: html
+---
+
+## Reading Data
+
+First, we will read in the data using **read_csv**.
+
+```{R}
+library(tidyverse)
+
+weather_data <- read_csv("SeoulBikeData.csv", locale = locale(encoding = "latin1"))
+
+head(weather_data)
+```
+
+We did experience an error when reading in the csv, but a simple Google search was able to address the issue. Looking at the head of the data, everything looks to have read in correctly. The only thing sticking out to me is that the dates were read in as **chr** but we can deal with that down the road if we need to.
+
+## EDA
+
+Now that we read in the data, we can begin conducting our EDA. First, we can check for missingness.
+
+```{R}
+colSums(is.na(weather_data))
+```
+
+Great, it looks like we don't have an missing values in our data set.
+
+Now, let's check column types. First we will check the unique values in our **chr** columns. 
+
+```{R}
+glimpse(weather_data)
+
+unique(weather_data$Date)
+
+unique(weather_data$Seasons)
+
+unique(weather_data$Holiday)
+
+unique(weather_data$`Functioning Day`)
+```
+
+From this information, it appears that Season, Holiday, and Functioning Day can be classified as factors. We can go ahead and set up factors here as well for those columns we believe make more sense as factors. These include Seasons, Holiday, and Functioning Day.
+
+```{R}
+weather_data <- weather_data |>
+  mutate(Seasons = as.factor(Seasons), Holiday = as.factor(Holiday), `Functioning Day` = as.factor(`Functioning Day`))
+```
+
+Now, we can also check the numeric columns to ensure the summary stats make sense.
+
+```{R}
+summary(weather_data)
+```
+
+Based on the summaries of the numeric variables, everything looks to make sense.
+
+Now, let's tackle the date column so the data can be read in as a date. For this, we will use lubridate.
+
+```{R}
+library(lubridate)
+
+weather_data <- weather_data |>
+  mutate(Date = dmy(Date))
+
+glimpse(weather_data)
+```
+
+Great, now all of our data types are sorted. Next, let's look to rename the columns so they are less difficult to reference.
+
+```{R}
+weather_data <- weather_data |>
+  rename(
+    date = Date,
+    rented_bike_count = `Rented Bike Count`,
+    hour = Hour,
+    temperature = `Temperature(°C)`,
+    humidity = `Humidity(%)`,
+    wind_speed = `Wind speed (m/s)`,
+    visibility = `Visibility (10m)`,
+    dew_point_temperature = `Dew point temperature(°C)`,
+    solar_radiation = `Solar Radiation (MJ/m2)`,
+    rainfall = `Rainfall(mm)`,
+    snowfall = `Snowfall (cm)`,
+    seasons = Seasons,
+    holiday = Holiday,
+    functioning_day = `Functioning Day`
+  )
+
+glimpse(weather_data)
+```
+
+Great, now let's look at **rented_bike_count** across our categorical variables. We can start with seasonal.
+
+```{R}
+bike_summary <- weather_data |>
+  group_by(seasons) |>
+  summarize(
+    mean_bikes = mean(rented_bike_count),
+    median = median(rented_bike_count),
+    sd = sd(rented_bike_count)
+  )
+
+bike_summary
+```
+
+Great, this appears to make sense with most bikes being rented in the summer and fewer in the winter and autumn and spring seeing rental levels in between. Let's now look at holiday.
+
+```{R}
+bike_summary <- weather_data |>
+  group_by(holiday) |>
+  summarize(
+    mean_bikes = mean(rented_bike_count),
+    median = median(rented_bike_count),
+    sd = sd(rented_bike_count)
+  )
+
+bike_summary
+```
+
+Great, this also makes sense with more bikes being rented on non-holidays. Now, we can look at Functioning Day.
+
+```{R}
+bike_summary <- weather_data |>
+  group_by(functioning_day) |>
+  summarize(
+    mean_bikes = mean(rented_bike_count),
+    median = median(rented_bike_count),
+    sd = sd(rented_bike_count)
+  )
+
+bike_summary
+```
+
+Interesting, it looks like no bikes are rented when functioning day is no. This makes sense when you think about it as someone would probably not rent a bike when it is not functioning. Let's filter out the non-functioning days. Since our functioning day is also "Yes" for every observation now, we can drop that column.
+
+```{R}
+weather_data <- weather_data |> filter(functioning_day == "Yes") |> select(-functioning_day)
+
+glimpse(weather_data)
+```
+
+Great, our data still looks good! Now, let's summarize the data across the hours so we only have one observation per day.
+
+```{R}
+bike_data <- weather_data |>
+  group_by(date, seasons, holiday) |> 
+  summarize(
+    rented_bike_count = sum(rented_bike_count),
+    rainfall = sum(rainfall),
+    snowfall = sum(snowfall),
+    temperature = mean(temperature),
+    humidity = mean(humidity),
+    wind_speed = mean(wind_speed),
+    visibility = mean(visibility),
+    dew_point_temperature = mean(dew_point_temperature),
+    solar_radiation = mean(solar_radiation)
+  ) |>
+  ungroup()
+
+head(bike_data)
+```
+
+Now that we have our new grouped data, let's rerun our summaries. 
+```{R}
+summary(bike_data)
+
+bike_summary <- bike_data |>
+  group_by(seasons) |>
+  summarize(
+    mean_bikes = mean(rented_bike_count),
+    median = median(rented_bike_count),
+    sd = sd(rented_bike_count)
+  )
+
+bike_summary
+
+bike_summary <- bike_data |>
+  group_by(holiday) |>
+  summarize(
+    mean_bikes = mean(rented_bike_count),
+    median = median(rented_bike_count),
+    sd = sd(rented_bike_count)
+  )
+
+bike_summary
+```
+
+Now, let's look at some plots.
+
+```{R}
+plot_vars <- c("temperature", "humidity", "wind_speed", "visibility", "dew_point_temperature", "solar_radiation", "rainfall", "snowfall")
+
+for (v in plot_vars) {
+  print(
+    ggplot(bike_data, aes(x = .data[[v]], y = rented_bike_count)) +
+      geom_point() +
+      labs(title = paste("Bike Rentals vs.", v), x = v, y = "Rented Bike Count")
+  )
+}
+```
+
+From the plots, it looks like bike rentals have a fairly strong positive correlation with temperature and solar radiation. Let's check this with a correlation matrix.
+
+```{R}
+corr_mat <- bike_data |> select(where(is.numeric)) |> cor()
+
+corr_mat
+```
+
+Our correlation matrix confirms what we saw in the plots with temperature and solar radiation both having a correlation with rented bike count greater than 0.7.
+
+## Splitting the Data
+
+Now it is time to split the data. We will split into a 75/25 split, strata with seasons.
+
+```{R}
+library(tidymodels)
+```
+
+```{R}
+set.seed(10)
+bike_split <- initial_split(bike_data, prop = 0.75, strata = seasons)
+bike_train <- training(bike_split)
+bike_test <- testing(bike_split)
+
+print(bike_test)
+print(bike_train)
+```
+
+Great, we have the initial test and training split completed. Let's also add 10 fold CV into the training set.
+
+```{R}
+bike_10_fold <- vfold_cv(bike_train, 10)
+```
+
+Now we have our folds for cross validation in the training set setup, we can move on to modelling.
+
+## Model Fitting
+
+Now, let's create three different recipes of models to train with our training set.
+
+```{R}
+
+recipe1 <- recipe(rented_bike_count ~ ., data = bike_train) |>
+  step_date(date, features = "dow") |>
+  step_mutate(day_type = factor(if_else(date_dow %in% c("Sat", "Sun"), "Weekend", "Weekday"))) |>
+  step_rm(date, date_dow) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_dummy(all_nominal_predictors())
+
+recipe2 <- recipe(rented_bike_count ~ ., data = bike_train) |>
+  step_date(date, features = "dow") |>
+  step_mutate(day_type = factor(if_else(date_dow %in% c("Sat", "Sun"), "Weekend", "Weekday"))) |>
+  step_rm(date, date_dow) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_interact(terms = ~ starts_with("seasons"):starts_with("holiday") +
+                  starts_with("seasons"):temperature + 
+                  temperature:rainfall)
+
+recipe3 <- recipe(rented_bike_count ~ ., data = bike_train) |>
+  step_date(date, features = "dow") |>
+  step_mutate(day_type = factor(if_else(date_dow %in% c("Sat", "Sun"), "Weekend", "Weekday"))) |>
+  step_rm(date, date_dow) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_interact(terms = ~ starts_with("seasons"):starts_with("holiday") +
+                  starts_with("seasons"):temperature + 
+                  temperature:rainfall) |>
+  step_poly(rainfall, snowfall, temperature, humidity, wind_speed, visibility, dew_point_temperature, solar_radiation, degree = 2)
+
+```
+
+Great, now that we have all of our recipes set, we can start loading our models.
+
+```{R}
+mod <- linear_reg() |>
+ set_engine("lm")
+```
+
+Now that our model is set up, let's create our workflows.
+
+```{R}
+bike_wf1 <- workflow() |> add_recipe(recipe1) |> add_model(mod)
+bike_wf2 <- workflow() |> add_recipe(recipe2) |> add_model(mod)
+bike_wf3 <- workflow() |> add_recipe(recipe3) |> add_model(mod)
+```
+
+Now that we have set up our workflows, all we can fit our models.
+
+```{R}
+results1 <- bike_wf1 |> fit_resamples(bike_10_fold)
+results2 <- bike_wf2 |> fit_resamples(bike_10_fold)
+results3 <- bike_wf3 |> fit_resamples(bike_10_fold)
+```
+
+Now that wer have fits, let's collect metrics of the training fits.
+
+```{R}
+collect_metrics(results1)
+collect_metrics(results2)
+collect_metrics(results3)
+```
+
+It appears that workflow 3 and therefore recipe 3 produces the lowest RMSE. Therefore, we will use this workflow to fit the test set.
+
+```{R}
+final_fit <- last_fit(bike_wf3, split = bike_split)
+collect_metrics(final_fit)
+```
+
+RMSE appears to be around 2963 for the test set. Now, let's exrtract our coefficients.
+
+```{R}
+coefs <- final_fit |> extract_fit_parsnip() |> tidy()
+
+coefs
+```
